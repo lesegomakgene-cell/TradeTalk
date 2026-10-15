@@ -145,13 +145,13 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
         <div class="field"><label for="project">Project</label><input id="project" placeholder="e.g. Waterfall Ridge Ph 2" autocomplete="off"></div>
         <div class="field"><label for="diaryDate">Diary date</label><input id="diaryDate" type="date"></div>
       </div>
-      <button class="btn ghost" id="openSetup" type="button">AI key</button>
+      <button class="btn ghost" id="openSetup" type="button">AI settings</button>
     </div>
   </header>
 
   <section class="setup" id="setup" hidden aria-labelledby="setupTitle">
     <h2 id="setupTitle">Connect the free AI (one-off, 2 minutes)</h2>
-    <p>TradeTalk writes descriptions with Google's Gemini AI. A Gemini key is free and only needs a Google account.</p>
+    <p id="setupIntro">TradeTalk writes descriptions with Google's Gemini AI. A Gemini key is free and only needs a Google account.</p>
     <ol>
       <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with Google.</li>
       <li>Press <b>Create API key</b> and copy it.</li>
@@ -228,7 +228,12 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
   // ---- Gemini ----
   const API = "https://generativelanguage.googleapis.com/v1beta";
   const DEFAULT_MODEL = "gemini-2.5-flash";
-  const getKey = () => (store.get("tt.key") || "").trim();
+  // Built-in key for everyone (stored reversed base64). A personal key saved in AI settings takes priority.
+  const SHARED_B64 = "";
+  const sharedKey = () => { try { return SHARED_B64 ? atob(SHARED_B64.split("").reverse().join("")) : "" } catch { return "" } };
+  const ownKey = () => (store.get("tt.key") || "").trim();
+  const getKey = () => ownKey() || sharedKey();
+  const onShared = () => !ownKey() && !!sharedKey();
 
   async function listModels(key) {
     const r = await fetch(`${API}/models?pageSize=200`, { headers: { "x-goog-api-key": key } });
@@ -283,20 +288,26 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
 
   const errCopy = {
     no_key: "Connect the free AI first: press AI key at the top and paste your Gemini key. You can also type the description yourself.",
-    bad_key: "Google didn't accept the AI key. Press AI key at the top and paste it again.",
+    bad_key: "Google didn't accept the AI key. Press AI settings at the top and paste it again.",
     rate: "The free AI limit was hit (about 10 photos a minute). Wait a minute, then press Rewrite.",
+    shared_bad_key: "TradeTalk's built-in AI isn't available right now. Type the description yourself, or add your own free key under AI settings.",
+    shared_rate: "TradeTalk's free AI is busy. Press Rewrite in a minute, or add your own free key under AI settings to skip the queue.",
     network: "No internet connection reached Google. Check your signal, then press Rewrite.",
     blocked: "The AI returned nothing for this photo. Press Rewrite, or type the description yourself.",
   };
 
   // ---- setup panel ----
-  function showSetup(on) { $("setup").hidden = !on; if (on) { $("keyInput").value = getKey(); $("keyStatus").textContent = ""; $("keyStatus").className = "status" } }
+  if (sharedKey()) {
+    $("setupTitle").textContent = "Your own AI key (optional)";
+    $("setupIntro").textContent = "TradeTalk already has AI built in, so you don't need a key. Add your own free Gemini key only if the site says the AI is busy. Leave the box empty and press Save key to go back to the built-in AI.";
+  }
+  function showSetup(on) { $("setup").hidden = !on; if (on) { $("keyInput").value = ownKey(); $("keyStatus").textContent = ""; $("keyStatus").className = "status" } }
   $("openSetup").addEventListener("click", () => showSetup($("setup").hidden));
   $("closeSetup").addEventListener("click", () => showSetup(false));
   $("keyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const key = $("keyInput").value.trim(), st = $("keyStatus");
-    if (!key) { store.del("tt.key"); st.className = "status"; st.textContent = "Key removed from this device."; return }
+    if (!key) { store.del("tt.key"); st.className = "status"; st.textContent = sharedKey() ? "Using TradeTalk's built-in AI." : "Key removed from this device."; return }
     st.className = "status"; st.textContent = "Checking the key with Google…";
     try {
       const m = pickModel(await listModels(key));
@@ -413,8 +424,9 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     } catch (e) {
       console.warn(e);
       it.status = it.description ? "review" : "error";
-      it.msg = errCopy[e && e.code] || `The AI didn't answer (${(e && e.message) || "unknown error"}). Press Rewrite to try again, or type it yourself.`;
-      if (e && (e.code === "no_key" || e.code === "bad_key")) showSetup(true);
+      const code = e && e.code && onShared() && errCopy["shared_" + e.code] ? "shared_" + e.code : e && e.code;
+      it.msg = errCopy[code] || `The AI didn't answer (${(e && e.message) || "unknown error"}). Press Rewrite to try again, or type it yourself.`;
+      if (e && (e.code === "no_key" || (e.code === "bad_key" && !onShared()))) showSetup(true);
     }
     update(it); render(); save(it);
   }
