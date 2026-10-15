@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="TradeTalk: drop site photos and get an approvable daily-diary description for each one, ready to paste into Procore.">
+<title>TradeTalk</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23F2B705'/%3E%3Cpath d='M8 11h16M16 11v13' stroke='%231C2023' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: site workbench on the left (drop zone + photo review cards), the day's approved diary pinned on the right; stacks on phones. */
+:root {
+  --bg: #EFEFEB; --surface: #FFFFFF; --sunk: #E5E6E1; --ink: #1C2023; --muted: #5C6368; --line: #D2D4CE;
+  --accent: #F2B705; --accent-ink: #1C2023; --accent-text: #8A6300;
+  --ok: #2E7A4C; --ok-bg: #E2F0E7; --warn: #A3460F; --warn-bg: #F8E6DA;
+  --stripe-a: #F2B705; --stripe-b: #1C2023;
+  --f-display: "Barlow Condensed", "Arial Narrow", Arial, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #14171A; --surface: #1D2125; --sunk: #181B1E; --ink: #E8E9E5; --muted: #9AA1A6; --line: #2F353A;
+  --accent: #F5C02B; --accent-ink: #14171A; --accent-text: #F5C02B;
+  --ok: #63C38B; --ok-bg: #1D3226; --warn: #F0A06E; --warn-bg: #3A2418;
+  --stripe-a: #F5C02B; --stripe-b: #14171A; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #14171A; --surface: #1D2125; --sunk: #181B1E; --ink: #E8E9E5; --muted: #9AA1A6; --line: #2F353A;
+  --accent: #F5C02B; --accent-ink: #14171A; --accent-text: #F5C02B;
+  --ok: #63C38B; --ok-bg: #1D3226; --warn: #F0A06E; --warn-bg: #3A2418;
+  --stripe-a: #F5C02B; --stripe-b: #14171A; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 48px }
+button, input, textarea { font: inherit; color: inherit }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px }
+
+.tape { height: 8px; margin-inline: calc(-1 * max(16px, env(safe-area-inset-left, 0px))) calc(-1 * max(16px, env(safe-area-inset-right, 0px)));
+  background: repeating-linear-gradient(-45deg, var(--stripe-a) 0 14px, var(--stripe-b) 14px 28px) }
+.wrap { max-width: 1240px; margin: 0 auto }
+header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; padding-block: 22px 18px; border-bottom: 1px solid var(--line) }
+.brand h1 { font-family: var(--f-display); font-weight: 700; font-size: 44px; line-height: .9; letter-spacing: .01em; margin: 0; text-transform: uppercase }
+.brand h1 span { color: var(--accent-text) }
+.brand p { margin: 6px 0 0; color: var(--muted); font-size: 14px }
+.job { display: flex; flex-wrap: wrap; gap: 12px }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0 }
+.field label, .lbl { font-family: var(--f-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+.field input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; min-width: 0 }
+#project { width: 240px; max-width: 100% }
+
+.notice { margin-top: 14px; padding: 10px 12px; border-radius: var(--r); background: var(--warn-bg); color: var(--warn); font-size: 14px }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 28px; margin-top: 22px; align-items: start }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr) } }
+
+.drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; cursor: pointer;
+  padding: 34px 20px; border: 2px dashed var(--line); border-radius: var(--r); background: var(--surface); transition: border-color .15s, background .15s }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--sunk) }
+.drop strong { font-family: var(--f-display); font-size: 28px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; line-height: 1 }
+.drop span { color: var(--muted); font-size: 14px }
+.drop .pickbtn { margin-top: 8px }
+#pick { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none }
+
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 22px 0 10px }
+.bar h2, .diary h2 { font-family: var(--f-display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .03em; margin: 0 }
+.count { font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: var(--r); padding: 7px 12px; cursor: pointer; font-weight: 500; font-size: 14px; white-space: nowrap }
+.btn:hover { border-color: var(--muted) }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600 }
+.btn.primary:hover { filter: brightness(.95) }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted) }
+.btn.ghost:hover { color: var(--ink); border-color: var(--line) }
+.btn:disabled { opacity: .5; cursor: not-allowed }
+
+.cards { display: flex; flex-direction: column; gap: 14px }
+.empty { color: var(--muted); font-size: 14px; padding: 18px; border: 1px solid var(--line); border-radius: var(--r); background: var(--sunk) }
+.card { display: grid; grid-template-columns: 220px minmax(0, 1fr); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden }
+.card.approved { border-color: var(--ok) }
+@media (max-width: 560px) { .card { grid-template-columns: minmax(0, 1fr) } }
+.shot { position: relative; background: var(--sunk); min-height: 160px }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; max-height: 260px }
+.chip { position: absolute; left: 8px; top: 8px; font-family: var(--f-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; background: var(--surface); color: var(--ink) }
+.chip.describing { background: var(--accent); color: var(--accent-ink) }
+.chip.approved { background: var(--ok); color: var(--surface) }
+.chip.error { background: var(--warn); color: var(--surface) }
+.body { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; min-width: 0 }
+.meta { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end }
+.meta .field { flex: 1 1 180px }
+.meta .time { font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; padding-bottom: 9px }
+.body textarea { width: 100%; min-height: 112px; resize: vertical; border: 1px solid var(--line); border-radius: var(--r); padding: 9px 10px; background: var(--bg); line-height: 1.5 }
+.body textarea[readonly] { background: var(--sunk); color: var(--muted) }
+.card.approved textarea { background: var(--ok-bg); color: var(--ink); border-color: transparent }
+.msg { font-size: 13px; color: var(--warn) }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.actions .spacer { flex: 1 }
+.redo { display: flex; gap: 8px; flex-wrap: wrap }
+.redo input { flex: 1 1 200px; min-width: 0; border: 1px solid var(--line); border-radius: var(--r); padding: 7px 10px; background: var(--bg) }
+
+.diary { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 12px }
+@media (max-width: 900px) { .diary { position: static } }
+.diary .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px }
+.diary .day { font-family: var(--f-mono); font-size: 12px; color: var(--muted) }
+.entries { display: flex; flex-direction: column; gap: 0; max-height: 60vh; overflow: auto }
+@media (max-width: 900px) { .entries { max-height: none } }
+.entry { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 10px; padding: 10px 0; border-top: 1px solid var(--line) }
+.entry:first-child { border-top: 0 }
+.entry img { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; background: var(--sunk) }
+.entry .t { font-family: var(--f-mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums }
+.entry p { margin: 2px 0 0; font-size: 14px; line-height: 1.45 }
+.entry .copy1 { font-size: 12px; padding: 2px 6px; margin-top: 4px }
+.diary .foot { display: flex; flex-wrap: wrap; gap: 8px }
+.toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: var(--r); font-size: 14px; z-index: 10 }
+@media (prefers-reduced-motion: no-preference) { .chip.describing { animation: pulse 1.2s ease-in-out infinite } @keyframes pulse { 50% { opacity: .55 } } }
+</style>
+<style>html{color-scheme:light}[hidden]{display:none!important}body{margin:0}img{max-width:100%}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
+</head>
+<body>
+<style>
+.topright { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end }
+.setup { margin-top: 18px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 10px; max-width: 760px }
+.setup h2 { font-family: var(--f-display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .03em; margin: 0 }
+.setup p, .setup ol { margin: 0; color: var(--muted); font-size: 14px; max-width: 65ch }
+.setup ol { padding-left: 20px; display: flex; flex-direction: column; gap: 4px }
+.setup a { color: var(--accent-text); font-weight: 600 }
+.setup form { display: flex; flex-wrap: wrap; gap: 8px }
+.setup input { flex: 1 1 260px; min-width: 0; border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; background: var(--bg); font-family: var(--f-mono); font-size: 13px }
+.setup .status { font-size: 13px }
+.setup .status.ok { color: var(--ok) } .setup .status.bad { color: var(--warn) }
+.small { font-size: 12px; color: var(--muted) }
+</style>
+
+<div class="tape" aria-hidden="true"></div>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Trade<span>Talk</span></h1>
+      <p>Drop site photos. Each one gets its own diary description. Approve, then copy into your Procore daily log.</p>
+    </div>
+    <div class="topright">
+      <div class="job">
+        <div class="field"><label for="project">Project</label><input id="project" placeholder="e.g. Waterfall Ridge Ph 2" autocomplete="off"></div>
+        <div class="field"><label for="diaryDate">Diary date</label><input id="diaryDate" type="date"></div>
+      </div>
+      <button class="btn ghost" id="openSetup" type="button">AI key</button>
+    </div>
+  </header>
+
+  <section class="setup" id="setup" hidden aria-labelledby="setupTitle">
+    <h2 id="setupTitle">Connect the free AI (one-off, 2 minutes)</h2>
+    <p>TradeTalk writes descriptions with Google's Gemini AI. A Gemini key is free and only needs a Google account.</p>
+    <ol>
+      <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with Google.</li>
+      <li>Press <b>Create API key</b> and copy it.</li>
+      <li>Paste it below and press <b>Save key</b>.</li>
+    </ol>
+    <form id="keyForm">
+      <input id="keyInput" type="password" placeholder="Paste your Gemini API key (starts with AIza…)" autocomplete="off" aria-label="Gemini API key">
+      <button class="btn primary" type="submit">Save key</button>
+      <button class="btn ghost" type="button" id="closeSetup">Close</button>
+    </form>
+    <div class="status" id="keyStatus" role="status"></div>
+    <p class="small">The key stays on this device only, in this browser. Photos go straight from your browser to Google to be described; nothing is stored on a TradeTalk server. On Google's free tier, Google may use what you send to improve its products. If your photos are confidential, turn on billing for the key in Google AI Studio (a few cents per hundred photos) so they aren't used.</p>
+  </section>
+
+  <div id="notice" class="notice" hidden></div>
+
+  <div class="grid">
+    <main>
+      <label class="drop" id="drop" for="pick">
+        <strong>Drop site photos here</strong>
+        <span>or tap to choose / take a photo · paste works too · JPG, PNG, WebP</span>
+        <span class="btn primary pickbtn">Choose photos</span>
+      </label>
+      <input id="pick" type="file" accept="image/*" multiple>
+
+      <div class="bar">
+        <h2>Review</h2>
+        <div class="actions">
+          <span class="count" id="reviewCount"></span>
+          <button class="btn" id="approveAll" hidden>Approve all ready</button>
+        </div>
+      </div>
+      <div class="cards" id="cards"></div>
+      <div class="empty" id="reviewEmpty">No photos waiting. Drop a photo above and its description is written straight away. You check it, edit if needed, and press Approve.</div>
+    </main>
+
+    <aside class="diary" aria-labelledby="diaryTitle">
+      <div class="head"><h2 id="diaryTitle">Daily diary</h2><span class="day" id="diaryDay"></span></div>
+      <div class="entries" id="entries"></div>
+      <div class="empty" id="diaryEmpty">Approved photo descriptions for this date appear here, in photo-time order.</div>
+      <div class="foot">
+        <button class="btn primary" id="copyAll" disabled>Copy diary</button>
+        <button class="btn" id="download" disabled>Download .txt</button>
+      </div>
+      <p class="small">Saved in this browser on this device. Use the same device and browser to come back to a day's diary.</p>
+    </aside>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k) } catch { return null } },
+    set(k, v) { try { localStorage.setItem(k, v) } catch {} },
+    del(k) { try { localStorage.removeItem(k) } catch {} },
+  };
+  const pad = (n) => String(n).padStart(2, "0");
+  const isoDay = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const hhmm = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}` };
+  const longDay = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  let toastT;
+  function toast(t) { const el = $("toast"); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 2400) }
+  function notice(t) { const el = $("notice"); el.textContent = t || ""; el.hidden = !t }
+
+  // ---- job header ----
+  $("project").value = store.get("tt.project") || "";
+  $("project").addEventListener("input", (e) => store.set("tt.project", e.target.value.trim()));
+  $("diaryDate").value = isoDay(new Date());
+
+  // ---- Gemini ----
+  const API = "https://generativelanguage.googleapis.com/v1beta";
+  const DEFAULT_MODEL = "gemini-2.5-flash";
+  const getKey = () => (store.get("tt.key") || "").trim();
+
+  async function listModels(key) {
+    const r = await fetch(`${API}/models?pageSize=200`, { headers: { "x-goog-api-key": key } });
+    if (!r.ok) { const e = new Error("list"); e.status = r.status; throw e }
+    const j = await r.json();
+    return (j.models || []).filter((m) => (m.supportedGenerationMethods || []).includes("generateContent")).map((m) => m.name.replace(/^models\//, ""));
+  }
+  function pickModel(names) {
+    if (names.includes(store.get("tt.model") || DEFAULT_MODEL)) return store.get("tt.model") || DEFAULT_MODEL;
+    const ver = (n) => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
+    const plain = names.filter((n) => /^gemini-\d+(\.\d+)?-flash(-latest)?$/.test(n)).sort((a, b) => ver(b) - ver(a));
+    if (plain.length) return plain[0];
+    const any = names.filter((n) => /flash/.test(n) && !/(image|tts|audio|live|embed|thinking|lite)/.test(n)).sort((a, b) => ver(b) - ver(a));
+    return any[0] || names.find((n) => /^gemini/.test(n)) || null;
+  }
+
+  async function blobToB64(blob) {
+    return await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = rej; fr.readAsDataURL(blob) });
+  }
+
+  async function gemini(prompt, blob) {
+    const key = getKey();
+    if (!key) throw { code: "no_key" };
+    const body = JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }, { inline_data: { mime_type: blob.type || "image/jpeg", data: await blobToB64(blob) } }] }],
+      generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+    });
+    let model = store.get("tt.model") || DEFAULT_MODEL;
+    const call = (m) => fetch(`${API}/models/${m}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body });
+    let r;
+    try { r = await call(model) } catch { throw { code: "network" } }
+    if (r.status === 404) {
+      const m = pickModel(await listModels(key).catch(() => []));
+      if (m && m !== model) { model = m; store.set("tt.model", m); r = await call(m) }
+    }
+    if (r.status === 429 || r.status === 503) {
+      let wait = 20000;
+      try { const j = await r.clone().json(); const d = JSON.stringify(j).match(/"retryDelay":"(\d+)/); if (d) wait = Math.min(60000, (+d[1] + 1) * 1000) } catch {}
+      await sleep(wait); r = await call(model);
+    }
+    if (!r.ok) {
+      let msg = ""; try { msg = (await r.json()).error?.message || "" } catch {}
+      if (r.status === 400 && /api key/i.test(msg) || r.status === 401 || r.status === 403) throw { code: "bad_key", message: msg };
+      if (r.status === 429) throw { code: "rate", message: msg };
+      throw { code: "api", message: msg || "HTTP " + r.status };
+    }
+    const j = await r.json();
+    const text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
+    if (!text) throw { code: "blocked" };
+    return text;
+  }
+
+  const errCopy = {
+    no_key: "Connect the free AI first: press AI key at the top and paste your Gemini key. You can also type the description yourself.",
+    bad_key: "Google didn't accept the AI key. Press AI key at the top and paste it again.",
+    rate: "The free AI limit was hit (about 10 photos a minute). Wait a minute, then press Rewrite.",
+    network: "No internet connection reached Google. Check your signal, then press Rewrite.",
+    blocked: "The AI returned nothing for this photo. Press Rewrite, or type the description yourself.",
+  };
+
+  // ---- setup panel ----
+  function showSetup(on) { $("setup").hidden = !on; if (on) { $("keyInput").value = getKey(); $("keyStatus").textContent = ""; $("keyStatus").className = "status" } }
+  $("openSetup").addEventListener("click", () => showSetup($("setup").hidden));
+  $("closeSetup").addEventListener("click", () => showSetup(false));
+  $("keyForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const key = $("keyInput").value.trim(), st = $("keyStatus");
+    if (!key) { store.del("tt.key"); st.className = "status"; st.textContent = "Key removed from this device."; return }
+    st.className = "status"; st.textContent = "Checking the key with Google…";
+    try {
+      const m = pickModel(await listModels(key));
+      if (!m) throw new Error("none");
+      store.set("tt.key", key); store.set("tt.model", m);
+      st.className = "status ok"; st.textContent = "Connected. Drop a photo to start.";
+      notice(""); setTimeout(() => showSetup(false), 1200);
+      for (const it of items.values()) if (it.status === "error" && it.msg === errCopy.no_key) { it.msg = ""; enqueue(it) }
+    } catch (err) {
+      st.className = "status bad";
+      st.textContent = err && err.status ? "Google didn't accept that key. Copy it again from AI Studio and paste it here." : "Couldn't reach Google. Check your connection and try again.";
+    }
+  });
+
+  // ---- storage (IndexedDB, this browser only) ----
+  let idb = null;
+  const openIdb = () => new Promise((res, rej) => {
+    const r = indexedDB.open("tradetalk", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("photos", { keyPath: "id" }).createIndex("date", "date");
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  function tx(mode, fn) {
+    return new Promise((res, rej) => { const t = idb.transaction("photos", mode); const out = fn(t.objectStore("photos")); t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error) });
+  }
+
+  const items = new Map();
+  const cardEls = new Map();
+  const selDate = () => $("diaryDate").value || isoDay(new Date());
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  function serialize(it) {
+    return { id: it.id, date: it.date, project: it.project, area: it.area || "", takenAt: it.takenAt, thumb: it.thumb,
+      description: it.description || "", status: it.status === "describing" ? "review" : it.status, createdAt: it.createdAt };
+  }
+  function save(it) {
+    if (!idb || !it.thumb) return;
+    tx("readwrite", (s) => s.put(serialize(it))).catch((e) => { console.warn(e); notice("This browser couldn't save the photo. Entries stay on screen until you close the page; copy the diary before you leave.") });
+  }
+  const debounced = new Map();
+  function saveSoon(it) { clearTimeout(debounced.get(it.id)); debounced.set(it.id, setTimeout(() => save(it), 500)) }
+  function remove(it) {
+    items.delete(it.id); dropCard(it.id); render();
+    if (idb) tx("readwrite", (s) => s.delete(it.id)).catch(() => {});
+  }
+  async function loadDay() {
+    if (!idb) return;
+    const day = selDate();
+    const rows = await tx("readonly", (s) => s.index("date").getAll(day)).catch(() => []);
+    for (const v of rows || []) { const it = items.get(v.id); if (!it) items.set(v.id, v); }
+    render();
+  }
+
+  // ---- image handling ----
+  async function decode(file) {
+    try { return await createImageBitmap(file, { imageOrientation: "from-image" }) } catch {}
+    return await new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { res(img); URL.revokeObjectURL(url) };
+      img.onerror = () => { rej(new Error("decode")); URL.revokeObjectURL(url) };
+      img.src = url;
+    });
+  }
+  function toCanvas(src, max) {
+    const w = src.width, h = src.height, s = Math.min(1, max / Math.max(w, h));
+    const c = document.createElement("canvas"); c.width = Math.round(w * s); c.height = Math.round(h * s);
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height); return c;
+  }
+  const toBlob = (c, q) => new Promise((r) => c.toBlob(r, "image/jpeg", q));
+  function makeThumb(src) {
+    let url = toCanvas(src, 960).toDataURL("image/jpeg", 0.72);
+    if (url.length > 260000) url = toCanvas(src, 720).toDataURL("image/jpeg", 0.62);
+    return url;
+  }
+  async function dataUrlToBlob(u) { return await (await fetch(u)).blob() }
+
+  // ---- describe ----
+  const queue = []; let running = 0; const MAX_PAR = 2;
+  function enqueue(it, note) { it.status = "describing"; update(it); render(); queue.push([it, note]); pump() }
+  function pump() {
+    while (running < MAX_PAR && queue.length) {
+      const [it, note] = queue.shift(); running++;
+      describe(it, note).finally(() => { running--; pump() });
+    }
+  }
+
+  function promptFor(it, note) {
+    const lines = [
+      "You write entries for a construction contractor's daily site diary (Procore Daily Log, Photos section).",
+      "Describe ONLY this one site photo, as the site agent would record it.",
+      "",
+      `Project: ${it.project || "not given"}`,
+      `Area / location on site: ${it.area || "not given"}`,
+      `Diary date: ${longDay(it.date)}${it.takenAt ? `, photo time about ${hhmm(it.takenAt)}` : ""}`,
+      "",
+      "Write 2 to 4 factual sentences in plain construction English (UK/South African spelling). Cover what applies:",
+      "- the activity or stage of works shown (e.g. excavation, shuttering, rebar fixing, concrete pour, brickwork, roofing, services, finishes)",
+      "- trades, labour, plant and equipment visible",
+      "- materials on site or being installed",
+      "- progress state (started, in progress, complete, awaiting inspection)",
+      "- safety, housekeeping, weather or quality points ONLY if clearly visible (PPE, barricading, open edges, ponding, damage).",
+      "Do not invent names, quantities, dimensions or anything not visible. Use 'appears to' where unsure. If an area was given, open with it.",
+      "Output the description text only: no heading, no preamble, no bullet points, no markdown.",
+    ];
+    if (note) lines.push("", `Previous description: ${it.description || "(none)"}`, `Site agent's correction or instruction: ${note}`, "Rewrite the description following that instruction.");
+    return lines.join("\n");
+  }
+
+  async function describe(it, note) {
+    it.msg = ""; if (!note) it.description = ""; update(it);
+    try {
+      const blob = it._ai || await dataUrlToBlob(it.thumb);
+      it.description = (await gemini(promptFor(it, note), blob)).replace(/^\s*[*#>-]+\s*/gm, "").trim();
+      it.status = "review";
+    } catch (e) {
+      console.warn(e);
+      it.status = it.description ? "review" : "error";
+      it.msg = errCopy[e && e.code] || `The AI didn't answer (${(e && e.message) || "unknown error"}). Press Rewrite to try again, or type it yourself.`;
+      if (e && (e.code === "no_key" || e.code === "bad_key")) showSetup(true);
+    }
+    update(it); render(); save(it);
+  }
+
+  // ---- intake ----
+  async function intake(files) {
+    const imgs = [...files].filter((f) => f.type.startsWith("image/") || /\.(heic|heif|jpe?g|png|webp|gif)$/i.test(f.name));
+    if (!imgs.length) return;
+    if (!getKey()) showSetup(true);
+    const day = selDate(), project = $("project").value.trim();
+    imgs.sort((a, b) => a.lastModified - b.lastModified);
+    for (const f of imgs) {
+      const it = { id: newId(), date: day, project, area: "", takenAt: f.lastModified || Date.now(), createdAt: Date.now(),
+        thumb: "", description: "", status: "describing" };
+      items.set(it.id, it); render();
+      try {
+        const src = await decode(f);
+        it.thumb = makeThumb(src);
+        it._ai = await toBlob(toCanvas(src, 1536), 0.82);
+        if (src.close) src.close();
+      } catch {
+        it.status = "error"; it.msg = `${f.name} couldn't be opened. iPhone HEIC photos: set Camera › Formats › Most Compatible, or export as JPG.`;
+        update(it); render(); continue;
+      }
+      update(it); save(it);
+      if (getKey()) enqueue(it);
+      else { it.status = "error"; it.msg = errCopy.no_key; update(it); render(); save(it) }
+    }
+  }
+
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach((t) => window.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over") }));
+  ["dragleave", "drop"].forEach((t) => window.addEventListener(t, (e) => { e.preventDefault(); if (t === "drop" || !e.relatedTarget) drop.classList.remove("over") }));
+  window.addEventListener("drop", (e) => { if (e.dataTransfer?.files?.length) intake(e.dataTransfer.files) });
+  $("pick").addEventListener("change", (e) => { intake(e.target.files); e.target.value = "" });
+  window.addEventListener("paste", (e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); intake(fs) } });
+
+  // ---- cards ----
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e }
+
+  function makeCard(it) {
+    const card = el("article", "card");
+    const shot = el("div", "shot"); const img = el("img"); img.alt = "Site photo"; const chip = el("span", "chip");
+    shot.append(img, chip);
+    const body = el("div", "body");
+    const meta = el("div", "meta");
+    const f = el("div", "field"); const lab = el("label", null, "Area / location (optional)"); const area = el("input");
+    area.id = "area-" + it.id; lab.htmlFor = area.id; area.placeholder = "e.g. Block B, Level 2 slab"; area.autocomplete = "off";
+    f.append(lab, area);
+    const time = el("span", "time");
+    meta.append(f, time);
+    const ta = el("textarea"); ta.id = "desc-" + it.id; ta.setAttribute("aria-label", "Photo description");
+    const msg = el("div", "msg");
+    const actions = el("div", "actions");
+    const approve = el("button", "btn primary", "Approve");
+    const rewrite = el("button", "btn", "Rewrite");
+    const edit = el("button", "btn", "Edit");
+    const spacer = el("span", "spacer");
+    const del = el("button", "btn ghost", "Remove");
+    actions.append(approve, rewrite, edit, spacer, del);
+    const redo = el("form", "redo"); redo.hidden = true;
+    const note = el("input"); note.id = "note-" + it.id; note.placeholder = "Tell the AI what to fix, e.g. it's a retaining wall, not a slab"; note.setAttribute("aria-label", "Rewrite instruction");
+    const go = el("button", "btn primary", "Rewrite"); go.type = "submit";
+    redo.append(note, go);
+    body.append(meta, ta, msg, actions, redo);
+    card.append(shot, body);
+
+    area.addEventListener("input", () => { it.area = area.value; saveSoon(it) });
+    ta.addEventListener("input", () => { it.description = ta.value; if (it.status === "error") { it.status = "review"; it.msg = "" } saveSoon(it); update(it) });
+    approve.addEventListener("click", () => {
+      it.description = ta.value.trim();
+      if (!it.description) { it.msg = "Add a description before approving."; update(it); return }
+      it.status = "approved"; it.msg = ""; clearTimeout(debounced.get(it.id)); update(it); render(); save(it); toast("Added to diary");
+    });
+    edit.addEventListener("click", () => { it.status = "review"; update(it); render(); save(it); ta.focus() });
+    rewrite.addEventListener("click", () => {
+      if (!it.description) { enqueue(it); return }
+      redo.hidden = !redo.hidden; if (!redo.hidden) note.focus();
+    });
+    redo.addEventListener("submit", (e) => { e.preventDefault(); redo.hidden = true; const n = note.value.trim(); note.value = ""; enqueue(it, n || "Write a fresh, clearer description.") });
+    del.addEventListener("click", () => {
+      if (del.dataset.armed) { remove(it); return }
+      del.dataset.armed = "1"; del.textContent = "Tap again to remove";
+      setTimeout(() => { delete del.dataset.armed; del.textContent = "Remove" }, 3000);
+    });
+
+    const refs = { card, img, chip, area, time, ta, msg, approve, rewrite, edit, redo };
+    cardEls.set(it.id, refs); update(it); return refs;
+  }
+  function dropCard(id) { const c = cardEls.get(id); if (c) c.card.remove(); cardEls.delete(id) }
+
+  function update(it) {
+    const c = cardEls.get(it.id); if (!c) return;
+    if (it.thumb && c.img.getAttribute("src") !== it.thumb) c.img.src = it.thumb;
+    const st = it.status;
+    c.card.classList.toggle("approved", st === "approved");
+    c.chip.className = "chip " + st;
+    c.chip.textContent = { describing: "Describing…", review: "Check & approve", approved: "Approved", error: "Needs attention" }[st] || st;
+    if (document.activeElement !== c.area) c.area.value = it.area || "";
+    if (document.activeElement !== c.ta) c.ta.value = it.description || "";
+    c.ta.readOnly = st === "describing" || st === "approved";
+    c.ta.placeholder = st === "describing" ? "Writing the description…" : "Describe the work shown in this photo";
+    c.time.textContent = it.takenAt ? "Photo " + hhmm(it.takenAt) : "";
+    c.msg.textContent = it.msg || ""; c.msg.hidden = !it.msg;
+    c.approve.hidden = st === "approved"; c.approve.disabled = st === "describing" || !(it.description || "").trim();
+    c.rewrite.hidden = st === "approved"; c.rewrite.disabled = st === "describing" || !it.thumb;
+    c.rewrite.textContent = it.description ? "Rewrite" : "Describe";
+    c.edit.hidden = st !== "approved";
+    if (st !== "review" && st !== "error") c.redo.hidden = true;
+  }
+
+  // ---- lists ----
+  const approvedForDay = () => [...items.values()].filter((i) => i.date === selDate() && i.status === "approved").sort((a, b) => a.takenAt - b.takenAt || a.createdAt - b.createdAt);
+  function diaryText(list) {
+    const proj = $("project").value.trim() || list.find((i) => i.project)?.project || "";
+    const head = `Daily diary${proj ? " · " + proj : ""} · ${longDay(selDate())}`;
+    return [head, ...list.map((it, i) => `${i + 1}. ${hhmm(it.takenAt)}${it.area ? " · " + it.area : ""}\n${it.description}`)].join("\n\n");
+  }
+
+  function render() {
+    const day = selDate();
+    $("diaryDay").textContent = longDay(day);
+    const mine = [...items.values()].filter((i) => i.date === day).sort((a, b) => a.takenAt - b.takenAt || a.createdAt - b.createdAt);
+    const pending = mine.filter((i) => i.status !== "approved");
+    const done = mine.filter((i) => i.status === "approved");
+
+    const cards = $("cards");
+    for (const [id, c] of cardEls) if (!items.has(id) || items.get(id).date !== day) { c.card.remove(); cardEls.delete(id) }
+    const order = [...pending].reverse().concat([...done].reverse());
+    const want = order.map((it) => (cardEls.get(it.id) || makeCard(it)).card);
+    if (want.length !== cards.children.length || want.some((c, i) => cards.children[i] !== c)) want.forEach((c) => cards.appendChild(c));
+    $("reviewEmpty").hidden = mine.length > 0;
+    const ready = pending.filter((i) => i.status === "review" && (i.description || "").trim());
+    const working = pending.filter((i) => i.status === "describing").length;
+    $("reviewCount").textContent = mine.length ? `${working ? working + " describing · " : ""}${pending.length - working} to check · ${done.length} approved` : "";
+    $("approveAll").hidden = ready.length < 2;
+    $("approveAll").textContent = `Approve all ${ready.length} ready`;
+
+    const ent = $("entries"); ent.textContent = "";
+    done.forEach((it, i) => {
+      const row = el("div", "entry");
+      const im = el("img"); im.src = it.thumb; im.alt = "";
+      const tx2 = el("div");
+      tx2.append(el("div", "t", `${i + 1} · ${hhmm(it.takenAt)}${it.area ? " · " + it.area : ""}`), el("p", null, it.description));
+      const cp = el("button", "btn ghost copy1", "Copy"); cp.addEventListener("click", () => copy(it.description, "Description copied"));
+      tx2.append(cp); row.append(im, tx2); ent.append(row);
+    });
+    $("diaryEmpty").hidden = done.length > 0;
+    $("copyAll").disabled = !done.length;
+    $("download").disabled = !done.length;
+  }
+
+  async function copy(text, ok) {
+    try { await navigator.clipboard.writeText(text); toast(ok) }
+    catch {
+      const t = el("textarea"); t.value = text; document.body.append(t); t.select();
+      let done = false; try { done = document.execCommand("copy") } catch {}
+      t.remove(); toast(done ? ok : "Copy blocked. Select the text and copy it manually.");
+    }
+  }
+
+  $("approveAll").addEventListener("click", () => {
+    const day = selDate();
+    for (const it of items.values()) if (it.date === day && it.status === "review" && (it.description || "").trim()) {
+      const c = cardEls.get(it.id); if (c) it.description = c.ta.value.trim();
+      it.status = "approved"; update(it); save(it);
+    }
+    render(); toast("All ready photos approved");
+  });
+  $("copyAll").addEventListener("click", () => copy(diaryText(approvedForDay()), "Diary copied. Paste it into Procore."));
+  $("download").addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([diaryText(approvedForDay())], { type: "text/plain" }));
+    const a = el("a"); a.href = url; a.download = `TradeTalk-diary-${selDate()}.txt`; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+  $("diaryDate").addEventListener("change", () => { render(); loadDay() });
+
+  render();
+  if (!getKey()) showSetup(true);
+  openIdb().then((d) => { idb = d; loadDay() }).catch(() => notice("This browser is blocking storage (private window?). TradeTalk works, but copy the diary before you close the page."));
+})();
+</script>
+</body>
+</html>
