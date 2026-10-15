@@ -158,7 +158,7 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
       <li>Paste it below and press <b>Save key</b>.</li>
     </ol>
     <form id="keyForm">
-      <input id="keyInput" type="password" placeholder="Paste your Gemini API key (starts with AIza…)" autocomplete="off" aria-label="Gemini API key">
+      <input id="keyInput" type="password" placeholder="Paste your Gemini API key" autocomplete="off" aria-label="Gemini API key">
       <button class="btn primary" type="submit">Save key</button>
       <button class="btn ghost" type="button" id="closeSetup">Close</button>
     </form>
@@ -227,13 +227,9 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
 
   // ---- Gemini ----
   const API = "https://generativelanguage.googleapis.com/v1beta";
-  const DEFAULT_MODEL = "gemini-2.5-flash";
-  // Built-in key for everyone (stored reversed base64). A personal key saved in AI settings takes priority.
-  const SHARED_B64 = "";
-  const sharedKey = () => { try { return SHARED_B64 ? atob(SHARED_B64.split("").reverse().join("")) : "" } catch { return "" } };
-  const ownKey = () => (store.get("tt.key") || "").trim();
-  const getKey = () => ownKey() || sharedKey();
-  const onShared = () => !ownKey() && !!sharedKey();
+  const DEFAULT_MODEL = "gemini-3.8-flash";
+  const BACKUP_MODEL = "gemini-flash-lite-latest"; // used when the main model is overloaded
+  const getKey = () => (store.get("tt.key") || "").trim();
 
   async function listModels(key) {
     const r = await fetch(`${API}/models?pageSize=200`, { headers: { "x-goog-api-key": key } });
@@ -241,8 +237,9 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     const j = await r.json();
     return (j.models || []).filter((m) => (m.supportedGenerationMethods || []).includes("generateContent")).map((m) => m.name.replace(/^models\//, ""));
   }
-  function pickModel(names) {
-    if (names.includes(store.get("tt.model") || DEFAULT_MODEL)) return store.get("tt.model") || DEFAULT_MODEL;
+  function pickModel(names, exclude = []) {
+    names = names.filter((n) => !exclude.includes(n));
+    if (names.includes(DEFAULT_MODEL)) return DEFAULT_MODEL;
     const ver = (n) => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
     const plain = names.filter((n) => /^gemini-\d+(\.\d+)?-flash(-latest)?$/.test(n)).sort((a, b) => ver(b) - ver(a));
     if (plain.length) return plain[0];
@@ -266,8 +263,12 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     let r;
     try { r = await call(model) } catch { throw { code: "network" } }
     if (r.status === 404) {
-      const m = pickModel(await listModels(key).catch(() => []));
+      const m = pickModel(await listModels(key).catch(() => []), [model]);
       if (m && m !== model) { model = m; store.set("tt.model", m); r = await call(m) }
+    }
+    if (r.status === 503 || r.status === 500) {
+      await sleep(2500); r = await call(model);
+      if (!r.ok && model !== BACKUP_MODEL) r = await call(BACKUP_MODEL);
     }
     if (r.status === 429 || r.status === 503) {
       let wait = 20000;
@@ -287,27 +288,21 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
   }
 
   const errCopy = {
-    no_key: "Connect the free AI first: press AI key at the top and paste your Gemini key. You can also type the description yourself.",
+    no_key: "Connect the free AI first: press AI settings at the top and paste your Gemini key. You can also type the description yourself.",
     bad_key: "Google didn't accept the AI key. Press AI settings at the top and paste it again.",
     rate: "The free AI limit was hit (about 10 photos a minute). Wait a minute, then press Rewrite.",
-    shared_bad_key: "TradeTalk's built-in AI isn't available right now. Type the description yourself, or add your own free key under AI settings.",
-    shared_rate: "TradeTalk's free AI is busy. Press Rewrite in a minute, or add your own free key under AI settings to skip the queue.",
     network: "No internet connection reached Google. Check your signal, then press Rewrite.",
     blocked: "The AI returned nothing for this photo. Press Rewrite, or type the description yourself.",
   };
 
   // ---- setup panel ----
-  if (sharedKey()) {
-    $("setupTitle").textContent = "Your own AI key (optional)";
-    $("setupIntro").textContent = "TradeTalk already has AI built in, so you don't need a key. Add your own free Gemini key only if the site says the AI is busy. Leave the box empty and press Save key to go back to the built-in AI.";
-  }
-  function showSetup(on) { $("setup").hidden = !on; if (on) { $("keyInput").value = ownKey(); $("keyStatus").textContent = ""; $("keyStatus").className = "status" } }
+  function showSetup(on) { $("setup").hidden = !on; if (on) { $("keyInput").value = getKey(); $("keyStatus").textContent = ""; $("keyStatus").className = "status" } }
   $("openSetup").addEventListener("click", () => showSetup($("setup").hidden));
   $("closeSetup").addEventListener("click", () => showSetup(false));
   $("keyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const key = $("keyInput").value.trim(), st = $("keyStatus");
-    if (!key) { store.del("tt.key"); st.className = "status"; st.textContent = sharedKey() ? "Using TradeTalk's built-in AI." : "Key removed from this device."; return }
+    if (!key) { store.del("tt.key"); st.className = "status"; st.textContent = "Key removed from this device."; return }
     st.className = "status"; st.textContent = "Checking the key with Google…";
     try {
       const m = pickModel(await listModels(key));
@@ -424,9 +419,8 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     } catch (e) {
       console.warn(e);
       it.status = it.description ? "review" : "error";
-      const code = e && e.code && onShared() && errCopy["shared_" + e.code] ? "shared_" + e.code : e && e.code;
-      it.msg = errCopy[code] || `The AI didn't answer (${(e && e.message) || "unknown error"}). Press Rewrite to try again, or type it yourself.`;
-      if (e && (e.code === "no_key" || (e.code === "bad_key" && !onShared()))) showSetup(true);
+      it.msg = errCopy[e && e.code] || `The AI didn't answer (${(e && e.message) || "unknown error"}). Press Rewrite to try again, or type it yourself.`;
+      if (e && (e.code === "no_key" || e.code === "bad_key")) showSetup(true);
     }
     update(it); render(); save(it);
   }
