@@ -56,6 +56,9 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 28px; margin-top: 22px; align-items: start }
 @media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr) } }
 
+.quick { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px }
+.quick input { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; min-width: 0; width: 100% }
+.quick .small { margin: 0 }
 .drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; cursor: pointer;
   padding: 34px 20px; border: 2px dashed var(--line); border-radius: var(--r); background: var(--surface); transition: border-color .15s, background .15s }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--sunk) }
@@ -170,6 +173,11 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
 
   <div class="grid">
     <main>
+      <div class="quick">
+        <label class="lbl" for="batchNote">What's happening? (optional shorthand)</label>
+        <input id="batchNote" placeholder="e.g. rebar fixing L2 slab Blk B, 4 fixers, awaiting eng inspection" autocomplete="off">
+        <p class="small">A few words is enough. The AI writes the full diary entry from your note and the photo. Applies to the next photos you drop.</p>
+      </div>
       <label class="drop" id="drop" for="pick">
         <strong>Drop site photos here</strong>
         <span>or tap to choose / take a photo · paste works too · JPG, PNG, WebP</span>
@@ -231,6 +239,37 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
   const BACKUP_MODEL = "gemini-flash-lite-latest"; // used when the main model is overloaded
   const getKey = () => (store.get("tt.key") || "").trim();
 
+  // ---- Claude (when opened as a claude.ai Artifact: uses the viewer's own Claude login, no key) ----
+  let claudeAI = null;
+  const aiReady = () => !!claudeAI || !!getKey();
+  const claudeReady = (window.claude && window.claude.use)
+    ? window.claude.use("sample").then(async (s) => {
+        if (!s) return false;
+        const lim = await s.limits().catch(() => null);
+        if (!lim || !lim.images) return false;
+        claudeAI = s; return true;
+      }).catch(() => false)
+    : Promise.resolve(false);
+  const claudeErr = {
+    not_granted: "Claude wasn't allowed for this page. Reload and press Allow when asked, or type the description yourself.",
+    sampling_disabled: "Claude isn't available on this account. Type the description yourself.",
+    rate_limited: "Claude's usage limit was hit for now. Wait a bit, then press Rewrite.",
+    session_expired: "Your Claude sign-in expired. Sign in again, then press Rewrite.",
+    image_rejected: "Claude couldn't read this photo. Try a different photo, or type the description yourself.",
+    refused: "Claude declined this photo. Type the description yourself.",
+    empty_completion: "Claude returned nothing for this photo. Press Rewrite, or type it yourself.",
+  };
+  async function askClaude(prompt, blob) {
+    try {
+      const { text } = await claudeAI(prompt, { images: blob, cache: false });
+      if (!text.trim()) throw { code: "blocked" };
+      return text.trim();
+    } catch (e) {
+      const code = e && e.code;
+      throw { code: "claude", message: claudeErr[code] || "Claude didn't answer (connection problem). Press Rewrite to try again." };
+    }
+  }
+
   async function listModels(key) {
     const r = await fetch(`${API}/models?pageSize=200`, { headers: { "x-goog-api-key": key } });
     if (!r.ok) { const e = new Error("list"); e.status = r.status; throw e }
@@ -252,6 +291,7 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
   }
 
   async function gemini(prompt, blob) {
+    if (claudeAI) return askClaude(prompt, blob);
     const key = getKey();
     if (!key) throw { code: "no_key" };
     const body = JSON.stringify({
@@ -334,7 +374,7 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
   function serialize(it) {
-    return { id: it.id, date: it.date, project: it.project, area: it.area || "", takenAt: it.takenAt, thumb: it.thumb,
+    return { id: it.id, date: it.date, project: it.project, area: it.area || "", hint: it.hint || "", takenAt: it.takenAt, thumb: it.thumb,
       description: it.description || "", status: it.status === "describing" ? "review" : it.status, createdAt: it.createdAt };
   }
   function save(it) {
@@ -397,13 +437,18 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
       `Area / location on site: ${it.area || "not given"}`,
       `Diary date: ${longDay(it.date)}${it.takenAt ? `, photo time about ${hhmm(it.takenAt)}` : ""}`,
       "",
+      ...(it.hint ? [
+        `Site agent's shorthand note for this photo: ${it.hint}`,
+        "Treat this note as the facts: it says what activity is happening and may give names, quantities, locations or status. Expand abbreviations and site shorthand into full sentences, include everything in the note, and use the photo to add visible detail. If the photo seems to disagree with the note, follow the note.",
+        "",
+      ] : []),
       "Write 2 to 4 factual sentences in plain construction English (UK/South African spelling). Cover what applies:",
       "- the activity or stage of works shown (e.g. excavation, shuttering, rebar fixing, concrete pour, brickwork, roofing, services, finishes)",
       "- trades, labour, plant and equipment visible",
       "- materials on site or being installed",
       "- progress state (started, in progress, complete, awaiting inspection)",
       "- safety, housekeeping, weather or quality points ONLY if clearly visible (PPE, barricading, open edges, ponding, damage).",
-      "Do not invent names, quantities, dimensions or anything not visible. Use 'appears to' where unsure. If an area was given, open with it.",
+      "Do not invent names, quantities, dimensions or anything not visible or given in the note. Use 'appears to' where unsure. If an area was given, open with it.",
       "Output the description text only: no heading, no preamble, no bullet points, no markdown.",
     ];
     if (note) lines.push("", `Previous description: ${it.description || "(none)"}`, `Site agent's correction or instruction: ${note}`, "Rewrite the description following that instruction.");
@@ -419,7 +464,7 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     } catch (e) {
       console.warn(e);
       it.status = it.description ? "review" : "error";
-      it.msg = errCopy[e && e.code] || `The AI didn't answer (${(e && e.message) || "unknown error"}). Press Rewrite to try again, or type it yourself.`;
+      it.msg = (e && e.code === "claude" && e.message) || errCopy[e && e.code] || `The AI didn't answer (${(e && e.message) || "unknown error"}). Press Rewrite to try again, or type it yourself.`;
       if (e && (e.code === "no_key" || e.code === "bad_key")) showSetup(true);
     }
     update(it); render(); save(it);
@@ -429,11 +474,12 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
   async function intake(files) {
     const imgs = [...files].filter((f) => f.type.startsWith("image/") || /\.(heic|heif|jpe?g|png|webp|gif)$/i.test(f.name));
     if (!imgs.length) return;
-    if (!getKey()) showSetup(true);
-    const day = selDate(), project = $("project").value.trim();
+    if (!aiReady()) showSetup(true);
+    const day = selDate(), project = $("project").value.trim(), hint = $("batchNote").value.trim();
+    if (hint) { $("batchNote").value = ""; toast(`Note applied to ${imgs.length} photo${imgs.length > 1 ? "s" : ""}`) }
     imgs.sort((a, b) => a.lastModified - b.lastModified);
     for (const f of imgs) {
-      const it = { id: newId(), date: day, project, area: "", takenAt: f.lastModified || Date.now(), createdAt: Date.now(),
+      const it = { id: newId(), date: day, project, area: "", hint, takenAt: f.lastModified || Date.now(), createdAt: Date.now(),
         thumb: "", description: "", status: "describing" };
       items.set(it.id, it); render();
       try {
@@ -446,7 +492,7 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
         update(it); render(); continue;
       }
       update(it); save(it);
-      if (getKey()) enqueue(it);
+      if (aiReady()) enqueue(it);
       else { it.status = "error"; it.msg = errCopy.no_key; update(it); render(); save(it) }
     }
   }
@@ -470,8 +516,11 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     const f = el("div", "field"); const lab = el("label", null, "Area / location (optional)"); const area = el("input");
     area.id = "area-" + it.id; lab.htmlFor = area.id; area.placeholder = "e.g. Block B, Level 2 slab"; area.autocomplete = "off";
     f.append(lab, area);
+    const hf = el("div", "field"); const hlab = el("label", null, "Your shorthand (optional)"); const hint = el("input");
+    hint.id = "hint-" + it.id; hlab.htmlFor = hint.id; hint.placeholder = "e.g. shuttering cols C3-C5"; hint.autocomplete = "off"; hint.enterKeyHint = "go";
+    hf.append(hlab, hint);
     const time = el("span", "time");
-    meta.append(f, time);
+    meta.append(hf, f, time);
     const ta = el("textarea"); ta.id = "desc-" + it.id; ta.setAttribute("aria-label", "Photo description");
     const msg = el("div", "msg");
     const actions = el("div", "actions");
@@ -489,6 +538,13 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     card.append(shot, body);
 
     area.addEventListener("input", () => { it.area = area.value; saveSoon(it) });
+    // Changing the shorthand rewrites the description from it (on Enter or leaving the field).
+    hint.addEventListener("change", () => {
+      const v = hint.value.trim(); if (v === (it.hint || "")) return;
+      it.hint = v; save(it);
+      if (it.status !== "approved" && it.status !== "describing" && it.thumb && aiReady()) enqueue(it);
+    });
+    hint.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); hint.blur() } });
     ta.addEventListener("input", () => { it.description = ta.value; if (it.status === "error") { it.status = "review"; it.msg = "" } saveSoon(it); update(it) });
     approve.addEventListener("click", () => {
       it.description = ta.value.trim();
@@ -507,7 +563,7 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
       setTimeout(() => { delete del.dataset.armed; del.textContent = "Remove" }, 3000);
     });
 
-    const refs = { card, img, chip, area, time, ta, msg, approve, rewrite, edit, redo };
+    const refs = { card, img, chip, area, hint, time, ta, msg, approve, rewrite, edit, redo };
     cardEls.set(it.id, refs); update(it); return refs;
   }
   function dropCard(id) { const c = cardEls.get(id); if (c) c.card.remove(); cardEls.delete(id) }
@@ -520,6 +576,8 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
     c.chip.className = "chip " + st;
     c.chip.textContent = { describing: "Describing…", review: "Check & approve", approved: "Approved", error: "Needs attention" }[st] || st;
     if (document.activeElement !== c.area) c.area.value = it.area || "";
+    if (document.activeElement !== c.hint) c.hint.value = it.hint || "";
+    c.hint.readOnly = st === "approved";
     if (document.activeElement !== c.ta) c.ta.value = it.description || "";
     c.ta.readOnly = st === "describing" || st === "approved";
     c.ta.placeholder = st === "describing" ? "Writing the description…" : "Describe the work shown in this photo";
@@ -599,7 +657,13 @@ header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-cont
   $("diaryDate").addEventListener("change", () => { render(); loadDay() });
 
   render();
-  if (!getKey()) showSetup(true);
+  claudeReady.then((ok) => {
+    if (ok) {
+      $("openSetup").hidden = true; showSetup(false);
+      $("download").hidden = true; // claude.ai pages can't start downloads; Copy diary works
+      for (const it of items.values()) if (it.status === "error" && it.msg === errCopy.no_key) { it.msg = ""; enqueue(it) }
+    } else if (!getKey()) showSetup(true);
+  });
   openIdb().then((d) => { idb = d; loadDay() }).catch(() => notice("This browser is blocking storage (private window?). TradeTalk works, but copy the diary before you close the page."));
 })();
 </script>
